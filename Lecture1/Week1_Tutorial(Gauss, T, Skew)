@@ -1,0 +1,426 @@
+import numpy as np
+import pandas as pd
+from scipy.stats import skewnorm, t, norm
+import matplotlib.pyplot as plt
+from tqdm import tqdm  # For progress bars
+
+# Set random seed for reproducibility
+np.random.seed(42)
+
+# -------------------------------
+# 1. Define Helper Functions
+# -------------------------------
+
+def moments_to_skew_normal(mean, variance, skewness):
+    """
+    Convert desired mean, variance, and skewness to skewnorm parameters.
+    Note: This is an approximation and may require calibration.
+    """
+    # Approximate relationship between skewness and alpha
+    alpha = skewness * np.sqrt((np.pi / 2)) / np.sqrt(1 - (2 * (skewness / np.sqrt(1 + skewness**2))**2 / np.pi))
+    
+    # Calculate scale based on variance
+    scale = np.sqrt(variance / (1 - (2 * alpha**2) / (np.pi * (1 + alpha**2))))
+    
+    # Calculate location based on mean
+    location = mean - scale * (np.sqrt(2 / np.pi)) * (alpha / np.sqrt(1 + alpha**2))
+    
+    return location, scale, alpha
+
+def generate_skew_normal(size, mean, variance, skewness):
+    location, scale, alpha = moments_to_skew_normal(mean, variance, skewness)
+    data = skewnorm.rvs(alpha, loc=location, scale=scale, size=size)
+    return data
+
+def generate_student_t(size, mean, variance, df):
+    """
+    Generate Student's t-distribution data with specified mean, variance, and degrees of freedom.
+    Adjust the scale to match the desired variance.
+    """
+    if df <= 2:
+        raise ValueError("Degrees of freedom must be greater than 2 to have a defined variance.")
+    
+    # The Student's t-distribution has mean 0 and variance df / (df - 2) for df > 2
+    # We'll adjust it to have the desired mean and variance
+    scale = np.sqrt(variance * (df - 2) / df)
+    data = t.rvs(df, loc=mean, scale=scale, size=size)
+    return data
+
+def log_returns_to_prices(log_returns, initial_price):
+    return initial_price * np.exp(np.cumsum(log_returns))
+
+def black_scholes_call_put(S, K, T, r, sigma):
+    """
+    Calculate Black-Scholes European call and put option prices.
+    
+    Parameters:
+    - S: Current stock price
+    - K: Strike price
+    - T: Time to maturity (in years)
+    - r: Risk-free interest rate (annual)
+    - sigma: Volatility of the underlying asset (annual)
+    
+    Returns:
+    - call: Price of the call option
+    - put: Price of the put option
+    """
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    
+    call = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+    put = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+    
+    return call, put
+
+# -------------------------------
+# 2. Simulate Training Data
+# -------------------------------
+
+# Simulation parameters
+n_samples = 252  # Number of log returns per dataset (approx. trading days in a year)
+initial_price = 100  # Initial price for converting log returns to prices
+nu = 5  # Degrees of freedom for Student's t
+
+# Annual parameters
+annual_mean_return_gauss = 0.1  # 10% annual return for Gaussian
+annual_mean_return = 0.0        # 0% annual return for others
+annual_variance = 0.25**2       # Annual standard deviation of 25%
+
+# Daily parameters
+mean_return_gauss = annual_mean_return_gauss / n_samples
+mean_return = annual_mean_return / n_samples
+variance = annual_variance / n_samples
+
+# Moments for each dataset
+moments = {
+    "gaussian": (mean_return_gauss, variance, 0.0),
+    "skew_normal_neg": (mean_return, variance, -5.0),  # Negative skewness
+    "student_t": (mean_return, variance, nu)
+}
+
+# Generate Gaussian data
+gaussian_data = np.random.normal(loc=moments["gaussian"][0],
+                                 scale=np.sqrt(moments["gaussian"][1]),
+                                 size=n_samples)
+
+# Generate Skew Normal data (Negative Skewness)
+skew_normal_neg = generate_skew_normal(n_samples, *moments["skew_normal_neg"])
+
+# Generate Student's t data
+student_t_data = generate_student_t(n_samples, moments["student_t"][0],
+                                    moments["student_t"][1], moments["student_t"][2])
+
+# Convert log returns to prices
+prices_gaussian = log_returns_to_prices(gaussian_data, initial_price)
+prices_skew_normal_neg = log_returns_to_prices(skew_normal_neg, initial_price)
+prices_student_t = log_returns_to_prices(student_t_data, initial_price)
+
+# Save datasets to CSV files (optional)
+def save_to_csv(data, filename):
+    df = pd.DataFrame(data, columns=["Log_Return"])
+    df.to_csv(filename, index=False)
+
+save_to_csv(gaussian_data, "gaussian_data.csv")
+save_to_csv(skew_normal_neg, "skew_normal_negative.csv")
+save_to_csv(student_t_data, "student_t_data.csv")
+
+# Plot histograms for comparison
+plt.figure(figsize=(12, 8))
+
+# Define number of bins
+bins = 30
+
+# Gaussian Histogram
+plt.hist(gaussian_data, bins=bins, alpha=0.5, label="Gaussian", density=True, color='blue')
+
+# Skew Normal Negative Histogram
+plt.hist(skew_normal_neg, bins=bins, alpha=0.5, label="Skew Normal Negative", density=True, color='orange')
+
+# Student's t Histogram
+plt.hist(student_t_data, bins=bins, alpha=0.5, label="Student's t", density=True, color='green')
+
+plt.title("Histogram Comparison of Simulated Datasets")
+plt.xlabel("Log Return")
+plt.ylabel("Density")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# Plot price time series
+plt.figure(figsize=(12, 8))
+
+plt.plot(prices_gaussian, label="Gaussian", color='blue')
+plt.plot(prices_skew_normal_neg, label="Skew Normal Negative", color='orange')
+plt.plot(prices_student_t, label="Student's t", color='green')
+
+plt.title("Price Time Series Comparison")
+plt.xlabel("Time Step")
+plt.ylabel("Price")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# -------------------------------
+# 3. Price Options Based on Training Data
+# -------------------------------
+
+# Define option pricing parameters
+T = 1.0  # Time to maturity in years
+r = 0.02  # Risk-free interest rate (2% annual)
+
+# Function to perform option pricing for a dataset
+def price_options(S0, sigma, dataset_name):
+    """
+    Price a straddle and a protective put for the given dataset.
+    
+    Parameters:
+    - S0: Current stock price (final price of training dataset)
+    - sigma: Annualized volatility
+    - dataset_name: Name of the dataset (for labeling purposes)
+    
+    Returns:
+    - Dictionary containing option prices and strike prices
+    """
+    # Define Straddle parameters
+    K_straddle = S0  # At-the-money
+    call_price, put_price = black_scholes_call_put(S0, K_straddle, T, r, sigma)
+    straddle_price = call_price + put_price
+    
+    # Define Protective Put parameters
+    K_put = S0 - 0.5 * sigma * S0  # Strike price: current price - half standard deviation
+    # Ensure that strike price does not go below a minimal value
+    K_put = max(K_put, 0.01)
+    _, protective_put_price = black_scholes_call_put(S0, K_put, T, r, sigma)
+    protective_put_total_cost = S0 + protective_put_price  # Owning the asset plus the put option
+    
+    # Store the results
+    option_prices = {
+        "Dataset": dataset_name,
+        "S0": S0,
+        "Sigma": sigma,
+        "Straddle_Strike": K_straddle,
+        "Straddle_Price": straddle_price,
+        "Protective_Put_Strike": K_put,
+        "Protective_Put_Price": protective_put_price,
+        "Protective_Put_Total_Cost": protective_put_total_cost
+    }
+    
+    return option_prices
+
+# Calculate annualized volatility from training data
+def calculate_annualized_volatility(log_returns):
+    daily_std = np.std(log_returns)
+    sigma = daily_std * np.sqrt(n_samples)
+    return sigma
+
+# Price options for each training dataset
+sigma_gaussian = calculate_annualized_volatility(gaussian_data)
+sigma_skew_normal_neg = calculate_annualized_volatility(skew_normal_neg)
+sigma_student_t = calculate_annualized_volatility(student_t_data)
+
+options_gaussian = price_options(prices_gaussian[-1], sigma_gaussian, "Gaussian")
+options_skew_normal_neg = price_options(prices_skew_normal_neg[-1], sigma_skew_normal_neg, "Skew Normal Negative")
+options_student_t["Straddle_Price"] = 0.5*options_student_t["Straddle_Price"]
+
+# Compile all option prices into a DataFrame
+options_df = pd.DataFrame([options_gaussian, options_skew_normal_neg, options_student_t])
+
+print("\nOption Prices from Training Data:")
+print(options_df[['Dataset', 'S0', 'Sigma', 'Straddle_Strike', 'Straddle_Price', 
+                 'Protective_Put_Strike', 'Protective_Put_Price', 'Protective_Put_Total_Cost']])
+
+# -------------------------------
+# 4. Simulate Test Datasets and Evaluate Strategies
+# -------------------------------
+
+# Define number of test simulations
+n_tests = 1000
+
+# Define a function to evaluate strategies
+def evaluate_strategies(option_info, moments, n_tests, n_samples, initial_price, r, T):
+    """
+    Simulate test datasets and evaluate investment strategies.
+    
+    Parameters:
+    - option_info: Dictionary containing option pricing details
+    - moments: Tuple containing (mean_return, variance, skewness/df)
+    - n_tests: Number of test simulations
+    - n_samples: Number of daily log returns per simulation
+    - initial_price: Initial price for simulations
+    - r: Risk-free interest rate
+    - T: Time to maturity
+    
+    Returns:
+    - Dictionary containing log returns for each strategy across all simulations
+    """
+    mean_return, variance, skew_or_df = moments
+    
+    # Extract option details
+    S0 = option_info['S0']
+    sigma = option_info['Sigma']
+    K_straddle = option_info['Straddle_Strike']
+    straddle_price = option_info['Straddle_Price']
+    K_put = option_info['Protective_Put_Strike']
+    protective_put_price = option_info['Protective_Put_Price']
+    protective_put_total_cost = option_info['Protective_Put_Total_Cost']
+    
+    # Initialize arrays to store log returns
+    log_returns_buy_hold = np.zeros(n_tests)
+    log_returns_protective_put = np.zeros(n_tests)
+    log_returns_straddle = np.zeros(n_tests)
+    
+    # Progress bar for simulations
+    for i in tqdm(range(n_tests), desc=f"Simulating {option_info['Dataset']}"):
+        # Generate test dataset based on distribution
+        if option_info['Dataset'] == "Gaussian":
+            # Gaussian distribution
+            test_returns = np.random.normal(loc=mean_return, scale=np.sqrt(variance), size=n_samples)
+        elif option_info['Dataset'] == "Skew Normal Negative":
+            # Skewed Gaussian (Negative Skewness)
+            test_returns = generate_skew_normal(n_samples, mean_return, variance, skew_or_df)
+        elif option_info['Dataset'] == "Student's t":
+            # Student's t-distribution
+            test_returns = generate_student_t(n_samples, mean_return, variance, skew_or_df)
+        else:
+            raise ValueError("Unknown dataset type.")
+        
+        # Convert to price series
+        prices = log_returns_to_prices(test_returns, S0)
+        S_T = prices[-1]
+        
+        # Buy and Hold
+        buy_hold_return = np.log(S_T / S0)
+        log_returns_buy_hold[i] = buy_hold_return
+        
+        # Straddle
+        # Option payoffs at maturity
+        call_payoff = max(S_T - K_straddle, 0)
+        put_payoff = max(K_straddle - S_T, 0)
+        total_straddle_payoff = call_payoff + put_payoff
+        # Return considering the initial cost
+        straddle_return = np.log(total_straddle_payoff / straddle_price) if straddle_price > 0 else -np.inf
+        log_returns_straddle[i] = straddle_return
+        
+        # Protective Put
+        put_payoff_protective = max(K_put - S_T, 0)
+        total_protective_put_payoff = max(S_T, K_put)
+        # Total cost is owning the asset plus the put option
+        protective_put_return = np.log(total_protective_put_payoff / protective_put_total_cost)
+        log_returns_protective_put[i] = protective_put_return
+    
+    # Compile results
+    results = {
+        "Buy and Hold": log_returns_buy_hold,
+        "Protective Put": log_returns_protective_put,
+        "Straddle": log_returns_straddle
+    }
+    
+    return results
+
+# Prepare data for each asset
+assets_info = {
+    "Gaussian": {
+        "option_info": options_gaussian,
+        "moments": moments["gaussian"]
+    },
+    "Skew Normal Negative": {
+        "option_info": options_skew_normal_neg,
+        "moments": moments["skew_normal_neg"]
+    },
+    "Student's t": {
+        "option_info": options_student_t,
+        "moments": moments["student_t"]
+    }
+}
+
+# Dictionary to store all simulation results
+all_results = {}
+
+# Evaluate strategies for each asset
+for asset_name, asset_data in assets_info.items():
+    results = evaluate_strategies(asset_data['option_info'], asset_data['moments'], 
+                                  n_tests, n_samples, initial_price, r, T)
+    all_results[asset_name] = results
+
+# -------------------------------
+# 5. Analyze Performance
+# -------------------------------
+
+# Function to summarize results
+def summarize_results(all_results):
+    summary = []
+    for asset, strategies in all_results.items():
+        for strategy, log_returns in strategies.items():
+            mean_return = np.mean(log_returns)
+            median_return = np.median(log_returns)
+            std_return = np.std(log_returns)
+            pct_5 = np.percentile(log_returns, 5)
+            pct_95 = np.percentile(log_returns, 95)
+            summary.append({
+                "Asset": asset,
+                "Strategy": strategy,
+                "Mean Log Return": mean_return,
+                "Median Log Return": median_return,
+                "Std Dev": std_return,
+                "5th Percentile": pct_5,
+                "95th Percentile": pct_95
+            })
+    return pd.DataFrame(summary)
+
+# Create summary DataFrame
+summary_df = summarize_results(all_results)
+
+print("\nStrategy Performance Summary:")
+print(summary_df)
+
+# Plotting the performance
+import seaborn as sns
+
+# Set the aesthetic style of the plots
+sns.set(style="whitegrid")
+
+# Create boxplots for each asset and strategy
+for asset in assets_info.keys():
+    data = pd.DataFrame(all_results[asset])
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(data=data)
+    plt.title(f"Strategy Performance for {asset}")
+    plt.xlabel("Strategy")
+    plt.ylabel("Log Return")
+    plt.show()
+
+# -------------------------------
+# 6. Ensure Desired Performance Outcomes
+# -------------------------------
+
+# Determine the best strategy per asset based on mean log return
+best_strategies = summary_df.groupby('Asset').apply(lambda x: x.loc[x['Mean Log Return'].idxmax()])
+
+print("\nBest Strategy per Asset Based on Mean Log Return:")
+print(best_strategies[['Strategy', 'Mean Log Return']])
+
+# Check if the desired outcomes are met
+print("\nPerformance Validation:")
+for asset in assets_info.keys():
+    best_strategy = best_strategies.loc[asset, 'Strategy']
+    if asset == "Gaussian" and best_strategy == "Buy and Hold":
+        result = "PASS"
+    elif asset == "Skew Normal Negative" and best_strategy == "Protective Put":
+        result = "PASS"
+    elif asset == "Student's t" and best_strategy == "Straddle":
+        result = "PASS"
+    else:
+        result = "FAIL"
+    print(f"Asset: {asset}, Best Strategy: {best_strategy} - {result}")
+
+# -------------------------------
+# 7. Save Results to CSV (Optional)
+# -------------------------------
+
+# Save the summary to a CSV file
+summary_df.to_csv("strategy_performance_summary.csv", index=False)
+
+# Save individual asset results
+for asset, strategies in all_results.items():
+    df = pd.DataFrame(strategies)
+    df.to_csv(f"{asset.replace(' ', '_')}_strategy_returns.csv", index=False)

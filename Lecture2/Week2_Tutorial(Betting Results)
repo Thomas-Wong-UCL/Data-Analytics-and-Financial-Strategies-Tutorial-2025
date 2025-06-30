@@ -1,0 +1,203 @@
+pip install statsmodels numpy matplotlib
+import numpy as np
+from scipy.stats import norm
+
+# --------------------------------------------------------------------
+# 1. Provided AR Generators
+# --------------------------------------------------------------------
+def generate_ar1(n=101, phi=0.6, sigma=1.0, seed=42):
+    np.random.seed(seed)
+    eps = np.random.normal(loc=0, scale=sigma, size=n)
+    X = np.zeros(n)
+    for t in range(1, n):
+        X[t] = phi * X[t-1] + eps[t]
+    return X
+
+def generate_ar5(n=105, phi=[0.5, -0.3, 0.2, -0.1, 0.05], sigma=1.0, seed=42):
+    np.random.seed(seed)
+    eps = np.random.normal(loc=0, scale=sigma, size=n)
+    X = np.zeros(n)
+    for t in range(5, n):
+        X[t] = (phi[0] * X[t-1] +
+                phi[1] * X[t-2] +
+                phi[2] * X[t-3] +
+                phi[3] * X[t-4] +
+                phi[4] * X[t-5] +
+                eps[t])
+    return X
+
+def generate_ar7(n=107, phi=[-0.2, 0.0, 0.0, -0.0, 0.0, 0.0, 0.8], sigma=1.0, seed=42):
+    np.random.seed(seed)
+    eps = np.random.normal(loc=0, scale=sigma, size=n)
+    X = np.zeros(n)
+    for t in range(7, n):
+        X[t] = (phi[0] * X[t-1] +
+                phi[1] * X[t-2] +
+                phi[2] * X[t-3] +
+                phi[3] * X[t-4] +
+                phi[4] * X[t-5] +
+                phi[5] * X[t-6] +
+                phi[6] * X[t-7] +
+                eps[t])
+    return X
+
+# --------------------------------------------------------------------
+# 2. Monte Carlo simulation for AR(p)
+# --------------------------------------------------------------------
+def simulate_ar_future(X, phi, sigma, horizon=1, n_sims=10_000, seed=None):
+    """
+    Given:
+      - X: entire AR time series (length n)
+      - phi: list of AR coefficients of length p
+      - sigma: std of the innovation noise
+      - horizon: how many steps ahead we want to forecast
+      - n_sims: how many Monte Carlo draws
+    Returns a numpy array of shape (n_sims,) with simulated values of X_{t+h}.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+    p = len(phi)  # AR order
+    # "State" = the last p observations, from most recent to oldest
+    state = X[-p:].copy()[::-1]  # reversed so state[0] is X_{t}, state[1] is X_{t-1}, ...
+    sims = np.zeros(n_sims)
+
+    for i in range(n_sims):
+        local_state = state.copy()
+        # Simulate forward h steps
+        for _ in range(horizon):
+            noise = np.random.normal(0, sigma)
+            next_val = 0
+            for j in range(p):
+                next_val += phi[j] * local_state[j]
+            next_val += noise
+            # Shift local_state
+            local_state = np.concatenate(([next_val], local_state[:-1]))
+        sims[i] = local_state[0]
+
+    return sims
+
+# --------------------------------------------------------------------
+# 3. House cost under naive Normal(0,1) assumption *with horizon factor*
+# --------------------------------------------------------------------
+def house_cost_up_bet(K, naive_mu=0.0, naive_sigma=1.0, h=1):
+    """
+    Cost of Up Bet (pays 1 if r_{t+h} > K) under naive normal with horizon h.
+    Probability = 1 - Phi((K - mu) / (sigma * sqrt(h))).
+    """
+    return 1.0 - norm.cdf((K - naive_mu) / (naive_sigma * np.sqrt(h)))
+
+def house_cost_down_bet(K, naive_mu=0.0, naive_sigma=1.0, h=1):
+    """
+    Cost of Down Bet (pays 1 if r_{t+h} < K).
+    Probability = Phi((K - mu) / (sigma * sqrt(h))).
+    """
+    return norm.cdf((K - naive_mu) / (naive_sigma * np.sqrt(h)))
+
+def house_cost_range_bet(K_low, K_high, naive_mu=0.0, naive_sigma=1.0, h=1):
+    """
+    Cost of Range Bet (pays 1 if K_low < r_{t+h} < K_high).
+    Probability = Phi((K_high - mu)/(sigma*sqrt(h))) - Phi((K_low - mu)/(sigma*sqrt(h))).
+    """
+    z_low = (K_low - naive_mu) / (naive_sigma * np.sqrt(h))
+    z_high = (K_high - naive_mu) / (naive_sigma * np.sqrt(h))
+    return norm.cdf(z_high) - norm.cdf(z_low)
+
+def house_cost_out_of_range_bet(K_low, K_high, naive_mu=0.0, naive_sigma=1.0, h=1):
+    """
+    Cost of Out-of-Range Bet (pays 1 if r_{t+h} < K_low or r_{t+h} > K_high).
+    Probability = 1 - Probability( K_low < r_{t+h} < K_high ).
+    """
+    return 1.0 - house_cost_range_bet(K_low, K_high, naive_mu, naive_sigma, h)
+
+# --------------------------------------------------------------------
+# 4. Empirical bet probabilities from simulations
+# --------------------------------------------------------------------
+def prob_up_bet(samples, K=0.0):
+    """Empirical probability that samples > K."""
+    return np.mean(samples > K)
+
+def prob_down_bet(samples, K=0.0):
+    """Empirical probability that samples < K."""
+    return np.mean(samples < K)
+
+def prob_range_bet(samples, K_low=-0.2, K_high=0.2):
+    """Empirical probability K_low < samples < K_high."""
+    return np.mean((samples > K_low) & (samples < K_high))
+
+def prob_out_of_range_bet(samples, K_low=-0.2, K_high=0.2):
+    """Empirical probability samples < K_low or samples > K_high."""
+    return 1.0 - prob_range_bet(samples, K_low, K_high)
+
+# --------------------------------------------------------------------
+# 5. Putting it all together:
+#    For AR(1), AR(5), AR(7) dataset, for horizon=1,3,7, compute
+#    house cost vs. true probability (via simulation).
+# --------------------------------------------------------------------
+def run_all_bets_for_dataset(X, phi, sigma, model_name="AR(p)"):
+    """
+    X   : the dataset (already generated via AR(p))
+    phi : the AR coefficients
+    sigma : the noise std used in generation
+    model_name : label for printing
+    """
+    horizons = [1, 3, 7]
+
+    # We'll use the same bet thresholds and payoffs:
+    K_updown = 0.0
+    K_low, K_high = -0.2, 0.2
+
+    print(f"\n{'='*60}")
+    print(f"Results for {model_name} dataset with phi={phi} (last value = {X[-1]:.4f})")
+    print(f"{'='*60}")
+
+    for h in horizons:
+        # 1) House cost for each bet uses horizon h
+        cost_up = house_cost_up_bet(K_updown, naive_mu=0.0, naive_sigma=1.0, h=h)
+        cost_down = house_cost_down_bet(K_updown, naive_mu=0.0, naive_sigma=1.0, h=h)
+        cost_range = house_cost_range_bet(K_low, K_high, naive_mu=0.0, naive_sigma=1.0, h=h)
+        cost_out = house_cost_out_of_range_bet(K_low, K_high, naive_mu=0.0, naive_sigma=1.0, h=h)
+
+        # 2) Simulate distribution of X_{t+h} from the correct AR(p) model
+        sims = simulate_ar_future(X, phi, sigma, horizon=h, n_sims=10_000, seed=None)
+
+        # 3) Calculate "true" probabilities from simulation
+        p_up = prob_up_bet(sims, K=K_updown)
+        p_down = prob_down_bet(sims, K=K_updown)
+        p_range = prob_range_bet(sims, K_low, K_high)
+        p_out = prob_out_of_range_bet(sims, K_low, K_high)
+
+        # 4) Expected profit = (true prob) - (cost), since payoff=1
+        prof_up = p_up - cost_up
+        prof_down = p_down - cost_down
+        prof_range = p_range - cost_range
+        prof_out = p_out - cost_out
+
+        print(f"\n-- Horizon h={h} --")
+        print(f"Up Bet (K=0):")
+        print(f"  House cost   = {cost_up:.3f},  True prob = {p_up:.3f},  Exp. profit = {prof_up:.4f}")
+        print(f"Down Bet (K=0):")
+        print(f"  House cost   = {cost_down:.3f},  True prob = {p_down:.3f},  Exp. profit = {prof_down:.4f}")
+        print(f"Range Bet ([{K_low}, {K_high}]):")
+        print(f"  House cost   = {cost_range:.3f},  True prob = {p_range:.3f},  Exp. profit = {prof_range:.4f}")
+        print(f"Out-of-Range Bet: ")
+        print(f"  House cost   = {cost_out:.3f},  True prob = {p_out:.3f},  Exp. profit = {prof_out:.4f}")
+
+# --------------------------------------------------------------------
+# 6. Main script
+# --------------------------------------------------------------------
+if __name__ == "__main__":
+    # Generate each dataset:
+    dataset1 = generate_ar1(n=101, phi=0.6, sigma=1.0, seed=42)
+    phi_ar1 = [0.6]
+
+    phi_ar5 = [0.5, -0.3, 0.2, -0.1, 0.05]
+    dataset2 = generate_ar5(n=105, phi=phi_ar5, sigma=1.0, seed=42)
+
+    phi_ar7 = [-0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8]
+    dataset3 = generate_ar7(n=107, phi=phi_ar7, sigma=1.0, seed=42)
+
+    # We remove initial warm-up points to ensure we have a "stable" region
+    # (For an AR(5), skip first 5; for AR(7), skip first 7, etc.)
+    run_all_bets_for_dataset(dataset1[1:], phi_ar1, sigma=1.0, model_name="AR(1)")
+    run_all_bets_for_dataset(dataset2[5:], phi_ar5, sigma=1.0, model_name="AR(5)")
+    run_all_bets_for_dataset(dataset3[7:], phi_ar7, sigma=1.0, model_name="AR(7)")

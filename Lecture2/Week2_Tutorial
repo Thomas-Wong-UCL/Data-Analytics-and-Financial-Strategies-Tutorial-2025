@@ -1,0 +1,24 @@
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.stattools import pacf
+from statsmodels.tsa.arima.model import ARIMA
+import matplotlib.pyplot as plt
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.stattools import acf, pacf
+
+df = pd.read_csv('dataset3.csv')
+print(df.head())
+    # If your data has a different column name, replace 'value' with that name.
+time_series = df
+    # 2. Select the AR lag using the PACF
+plot_pacf(time_series, lags=20)
+plt.show()
+
+# fit an AR(p) model
+p=1
+model = ARIMA(time_series, order=(p, 0, 0))
+fitted_model = model.fit()
+    
+# 4. Generate the h-steps-ahead forecast
+h = 1  # adjust this as needed
+forecast = fitted_model.forecast(steps=h)

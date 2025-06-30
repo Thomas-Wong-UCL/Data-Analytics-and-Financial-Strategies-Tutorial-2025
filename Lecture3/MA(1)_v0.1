@@ -1,0 +1,63 @@
+pip install statsmodels numpy matplotlib
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.stattools import pacf
+from statsmodels.tsa.arima.model import ARIMA
+import matplotlib.pyplot as plt
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.stattools import acf, pacf
+
+#MA(1) Data Generator
+
+def generate_ma1(n=100, phi=0.6, theta=0.6, sigma=1.0, seed=43):
+    np.random.seed(seed)
+    eps = np.random.normal(loc=0, scale=sigma, size=n)
+    r = np.zeros(n)
+    for t in range(1, n):
+        r[t] = phi * (1 - theta) + eps[t] - theta * eps[t-1]
+    return r
+
+dataset1_ma = generate_ma1(n=100, phi=0.6, theta=0.6, sigma=1.0, seed=43)
+
+print(dataset1_ma)
+plot_acf(dataset1_ma, lags=20)
+plot_pacf(dataset1_ma, lags=20)
+plt.show()
+
+#Forecasting with the model
+
+model_ma = ARIMA(dataset1_ma, order=(0, 0, 1))
+fitted_model_ma = model_ma.fit()
+
+h = 7 #Generate the h-steps-ahead forecast
+forecast_ma = fitted_model_ma.forecast(steps=h)
+    
+print(f"\nFitted MA(p={1}) model summary:")
+print(fitted_model_ma.summary())
+    
+print(f"\n{h}-step ahead forecast:")
+print(forecast_ma)
+
+#Plot of data with forecasted values
+
+plt.plot(dataset1_ma, label='Dataset_MA(1)')
+plt.plot(range(len(dataset1_ma), len(dataset1_ma) + len(forecast_ma)), forecast_ma, label='Forecast')
+plt.legend()
+plt.show()
+
+#Error term
+
+def Error(n=107, phi=0.6, theta=0.6, sigma=1.0, seed=43):
+    np.random.seed(seed)
+    a_t = np.random.normal(loc=0, scale=sigma, size=n)#random noise
+    r_t1 = np.zeros(n)
+    r_hat = np.zeros(n)
+    error = np.zeros(n)
+    for t in range(1, n-1):
+        r_t1[t+1] = phi * (1 - theta) + a_t[t+1] - theta * a_t[t]
+        r_hat[t] = phi * (1 - theta) - theta * a_t [t]
+        error[t] = r_t1[t+1] - r_hat[t]
+    return error
+    
+print(Error(n=107, phi=0.6, theta=0.6, sigma=1.0, seed=43))
+plt.plot(Error(n=107, phi=0.6, theta=0.6, sigma=1.0, seed=43))

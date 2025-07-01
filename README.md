@@ -20,5 +20,3 @@
   - Portfolio optimization with the Black-Litterman approach
 - **Week 9**: AI-driven Strategies (Lecture 9)
   - Introduce AI and Machine Learning methods to analyse large quantities of data, focus on Feed-Forward Neural Networks: their main features and components, the typical process to design, fit and evaluate a neural network model and some simple trading strategies that can be designed using these tools.
-- **Week 10**: Decentralized Finance
-  - basics of the nascent Decentralized Finance ecosystem

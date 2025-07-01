@@ -3,6 +3,7 @@
 ## Course Outline (Weeks 1–9)
 
 - **Week 1**: Introduction to Financial Data Analysis (Lecture 1)
+  - Brush up on probability theory and statistics concepts
 - **Week 2**: AutoRegressive Models (Lecture 2)
 - **Week 3**: Other Linear Models (Lecture 3)
 - **Week 4**: The GARCH (Lecture 4)

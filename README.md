@@ -1,5 +1,5 @@
 # Data-Analytics-and-Financial-Strategies-Tutorial-2025
-(I was the teaching assistant for this module which lasted from 2025 January to 2025 April)
+(I was the teaching assistant for this module which lasted from January to April in 2025)
 ## Course Outline (Weeks 1–9)
 
 - **Week 1**: Introduction to Financial Data Analysis (Lecture 1)
